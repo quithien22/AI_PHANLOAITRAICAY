@@ -1,0 +1,161 @@
+{
+  "info": {
+    "name": "Fruit Ripeness Classifier API",
+    "description": "Collection test API phan loai trai cay (fresh/rotten). Import file nay va Local.postman_environment.json vao Postman, chon environment 'Fruit API - Local', roi chay API: uvicorn api.main:app --port 8000.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Health check",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('status = ok', () => pm.expect(body.status).to.eql('ok'));",
+              "pm.test('model da duoc nap', () => pm.expect(body.model_loaded).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "2. Get classes",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('classes la mang khong rong', () => pm.expect(body.classes).to.be.an('array').that.is.not.empty);",
+              "pm.test('co fresh va rotten', () => pm.expect(body.classes).to.include.members(['fresh', 'rotten']));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/classes",
+          "host": ["{{base_url}}"],
+          "path": ["classes"]
+        }
+      }
+    },
+    {
+      "name": "3. Predict - anh hop le",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.test('label la fresh hoac rotten', () => pm.expect(['fresh', 'rotten']).to.include(body.label));",
+              "pm.test('confidence trong khoang 0-100', () => pm.expect(body.confidence).to.be.within(0, 100));",
+              "pm.test('co probabilities cho moi lop', () => pm.expect(body.probabilities).to.have.all.keys('fresh', 'rotten'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": [],
+              "description": "Bam Select Files va chon 1 anh JPG/PNG/WEBP/BMP (<= 10MB)"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/predict",
+          "host": ["{{base_url}}"],
+          "path": ["predict"]
+        }
+      }
+    },
+    {
+      "name": "4. Predict - sai dinh dang (415)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 415', () => pm.response.to.have.status(415));",
+              "pm.test('co thong bao loi', () => pm.expect(pm.response.json().detail).to.be.a('string'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": [],
+              "description": "Chon 1 file KHONG phai anh (vi du .txt hoac .pdf)"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/predict",
+          "host": ["{{base_url}}"],
+          "path": ["predict"]
+        }
+      }
+    },
+    {
+      "name": "5. Predict - thieu file (422)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 422', () => pm.response.to.have.status(422));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": []
+        },
+        "url": {
+          "raw": "{{base_url}}/predict",
+          "host": ["{{base_url}}"],
+          "path": ["predict"]
+        }
+      }
+    }
+  ]
+}

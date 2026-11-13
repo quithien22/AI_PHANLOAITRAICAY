@@ -1,0 +1,10 @@
+.git
+_to_delete
+data
+reports
+docs
+notebooks
+tests
+__pycache__
+*.pyc
+.ipynb_checkpoints

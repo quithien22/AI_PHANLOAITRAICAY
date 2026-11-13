@@ -1,0 +1,15 @@
+# --- API ---
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+numpy
+tensorflow>=2.12
+
+# --- Train / notebooks / tests ---
+pandas
+matplotlib
+seaborn
+scikit-learn
+jupyter
+pytest

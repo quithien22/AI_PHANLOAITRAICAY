@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+
+# Dữ liệu và model (không đưa lên Git)
+data/raw/
+data/processed/*
+data/interim/*
+!data/processed/.gitkeep
+!data/interim/.gitkeep
+models/
+
+_to_delete/
