@@ -1,0 +1,184 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# 03 – So sánh các thuật toán học máy và chọn mô hình tốt nhất\n",
+    "\n",
+    "Notebook này chạy **6 thuật toán học máy** trên cùng một bộ đặc trưng và cùng một cách chia dữ liệu, để so sánh công bằng:\n",
+    "\n",
+    "| Tên | Thuật toán | Ý tưởng chính |\n",
+    "|---|---|---|\n",
+    "| E1 | Logistic Regression | Đường phân tách tuyến tính + hàm sigmoid |\n",
+    "| E2 | K-Nearest Neighbors (k=5) | Gán nhãn theo đa số của 5 ảnh gần nhất |\n",
+    "| E3 | Gaussian Naive Bayes | Định lý Bayes, giả định các đặc trưng độc lập |\n",
+    "| E4 | Decision Tree (depth 10) | Chuỗi câu hỏi if/else trên đặc trưng |\n",
+    "| E5 | Random Forest (200 cây) | Nhiều cây quyết định bỏ phiếu (ensemble, bagging) |\n",
+    "| E6 | SVM kernel RBF (C=10) | Siêu phẳng lề lớn nhất trong không gian kernel |\n",
+    "\n",
+    "**Quy tắc chọn:** `val_acc` cao nhất (hòa thì `val_loss` thấp hơn), chỉ dùng tập validation. Tập test chỉ dùng một lần cho mô hình thắng."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import os, sys\n",
+    "sys.path.insert(0, os.path.abspath('..'))\n",
+    "\n",
+    "import json\n",
+    "import matplotlib.pyplot as plt\n",
+    "from IPython.display import Image\n",
+    "\n",
+    "from src.data_loader import BEST_CONFIG_PATH, REPORTS_DIR\n",
+    "from src.experiments import run_experiments"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 1. Chạy các thí nghiệm\n",
+    "\n",
+    "Mô hình thắng sẽ được đánh giá trên tập test và lưu vào `models/best_model.joblib` (API sẽ dùng file này). SVM và KNN có thể chậm hơn các thuật toán còn lại."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "results, info = run_experiments()\n",
+    "results[['name', 'val_acc', 'val_f1', 'val_loss', 'seconds']]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "Image(os.path.join(REPORTS_DIR, 'experiments_comparison.png'))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 2. Kết quả chốt\n",
+    "\n",
+    "Cấu hình thắng, điểm validation và điểm test cuối cùng."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(json.dumps(info, ensure_ascii=False, indent=2))\n",
+    "Image(os.path.join(REPORTS_DIR, 'confusion_matrix.png'))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 3. Chọn siêu tham số: ảnh hưởng của `k` trong KNN\n",
+    "\n",
+    "**Bias–variance:** `k` nhỏ thì mô hình rất linh hoạt (dễ overfit, accuracy train cao nhưng val thấp); `k` lớn thì mô hình mượt hơn nhưng có thể quá đơn giản (underfit). Điểm tốt nhất thường nằm ở giữa."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from sklearn.metrics import accuracy_score\n",
+    "from src.features import load_feature_splits\n",
+    "from src.train import build_model\n",
+    "\n",
+    "data = load_feature_splits()\n",
+    "X_train, y_train = data['train']\n",
+    "X_val, y_val = data['val']\n",
+    "\n",
+    "ks = [1, 3, 5, 7, 11, 15, 21, 31]\n",
+    "tr_acc, va_acc = [], []\n",
+    "for k in ks:\n",
+    "    m = build_model({'algo': 'knn', 'params': {'n_neighbors': k}}).fit(X_train, y_train)\n",
+    "    tr_acc.append(accuracy_score(y_train, m.predict(X_train)))\n",
+    "    va_acc.append(accuracy_score(y_val, m.predict(X_val)))\n",
+    "\n",
+    "plt.plot(ks, tr_acc, marker='o', label='Train')\n",
+    "plt.plot(ks, va_acc, marker='o', label='Validation')\n",
+    "plt.xlabel('k (số láng giềng)'); plt.ylabel('Accuracy'); plt.title('KNN: ảnh hưởng của k')\n",
+    "plt.legend(); plt.grid(alpha=0.3); plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 4. Overfitting với Decision Tree: ảnh hưởng của `max_depth`\n",
+    "\n",
+    "Cây càng sâu càng khớp chặt dữ liệu train. Khi khoảng cách giữa đường Train và Validation lớn dần là dấu hiệu **overfitting**."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "depths = [1, 2, 3, 5, 8, 12, 20, None]\n",
+    "tr_acc, va_acc = [], []\n",
+    "for d in depths:\n",
+    "    m = build_model({'algo': 'decision_tree', 'params': {'max_depth': d}}).fit(X_train, y_train)\n",
+    "    tr_acc.append(accuracy_score(y_train, m.predict(X_train)))\n",
+    "    va_acc.append(accuracy_score(y_val, m.predict(X_val)))\n",
+    "\n",
+    "labels = [str(d) for d in depths]\n",
+    "plt.plot(labels, tr_acc, marker='o', label='Train')\n",
+    "plt.plot(labels, va_acc, marker='o', label='Validation')\n",
+    "plt.xlabel('max_depth (None = không giới hạn)'); plt.ylabel('Accuracy'); plt.title('Decision Tree: ảnh hưởng của độ sâu')\n",
+    "plt.legend(); plt.grid(alpha=0.3); plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 5. Độ quan trọng của đặc trưng\n",
+    "\n",
+    "Nếu mô hình thắng là Random Forest hoặc Decision Tree, biểu đồ này cho biết đặc trưng nào đóng góp nhiều nhất vào việc phân biệt `fresh` và `rotten`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "path = os.path.join(REPORTS_DIR, 'feature_importance.png')\n",
+    "Image(path) if os.path.exists(path) else print('Mô hình thắng không có feature_importances_ (không phải thuật toán dựa trên cây).')"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}

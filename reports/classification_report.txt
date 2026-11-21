@@ -1,10 +1,10 @@
-Test log-loss: 0.0669 | Test accuracy: 0.9937
+Test log-loss: 0.2333 | Test accuracy: 0.9119
 
               precision    recall  f1-score   support
 
-       fresh     0.9931    0.9923    0.9927      1164
-      rotten     0.9941    0.9948    0.9945      1534
+       fresh     0.8990    0.8990    0.8990        99
+      rotten     0.9219    0.9219    0.9219       128
 
-    accuracy                         0.9937      2698
-   macro avg     0.9936    0.9935    0.9936      2698
-weighted avg     0.9937    0.9937    0.9937      2698
+    accuracy                         0.9119       227
+   macro avg     0.9104    0.9104    0.9104       227
+weighted avg     0.9119    0.9119    0.9119       227

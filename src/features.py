@@ -9,6 +9,13 @@ Mỗi ảnh được biến thành 1 vector số gồm N_FEATURES đặc trưng 
     4. Texture: độ lớn gradient trung bình/độ lệch chuẩn theo x và y   ->  4 đặc trưng
        (vết thâm, đốm làm bề mặt kém đồng đều hơn).
 
+Hue là góc tròn (đỏ nằm cả ở 0 lẫn 1), nên trục hue được dịch HUE_SHIFT để dải màu đỏ -> cam -> vàng -> xanh
+nằm liền nhau; nhờ đó histogram, trung bình và độ lệch chuẩn của hue đúng với cả táo đỏ lẫn táo xanh.
+
+Nếu USE_FOREGROUND_MASK = True, mọi đặc trưng chỉ tính trên phần QUẢ (không tính nền):
+màu nền được ước lượng từ viền ảnh, điểm ảnh nào khác màu nền đủ nhiều thì là quả. Nhờ đó ảnh nền xanh,
+nền xám... không còn làm lệch histogram so với ảnh train nền trắng. Không tách được nền thì dùng cả ảnh.
+
 preprocess_image_bytes() được API dùng khi dự đoán và PHẢI cho ra đúng vector như lúc train.
 """
 import io
@@ -17,9 +24,17 @@ import os
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
-from src.data_loader import CLASS_NAMES, IMG_SIZE, PROCESSED_DIR, ROOT_DIR, load_splits
+from src.data_loader import CLASS_NAMES, IMG_SIZE, PROCESSED_DIR, ROOT_DIR, SPLIT_TAG, load_splits
 
 H_BINS, S_BINS, V_BINS = 16, 8, 8
+
+USE_FOREGROUND_MASK = True  # False = tính đặc trưng trên cả ảnh như bản cũ
+FEATURE_VERSION = ("fg2" if USE_FOREGROUND_MASK else "full2")  # đổi cách tính -> cache đặc trưng tự tạo lại
+HUE_SHIFT = 0.1    # dịch trục hue để màu đỏ (quanh 0 và 1) không bị cắt đôi
+
+_BORDER = 3        # độ dày dải viền (pixel, trên ảnh 64x64) dùng để ước lượng màu nền
+_BG_DIST = 0.18    # khoảng cách RGB (thang 0-1) tối thiểu so với màu nền để tính là quả
+_BORDER_STD = 0.12 # viền lộn xộn hơn mức này (quả chạm mép ảnh) thì không tin màu nền
 
 FEATURE_NAMES = (
     [f"hist_H_{i}" for i in range(H_BINS)]
@@ -36,12 +51,40 @@ class InvalidImageError(ValueError):
     """File tải lên không phải ảnh hợp lệ."""
 
 
+def foreground_mask(rgb):
+    """
+    rgb: mảng (H, W, 3) giá trị 0-1. Trả về mask bool (H, W) của phần quả,
+    hoặc None nếu không tách được (viền không đồng nhất, hoặc mask quá nhỏ/quá lớn).
+    """
+    b = _BORDER
+    border = np.concatenate(
+        [rgb[:b].reshape(-1, 3), rgb[-b:].reshape(-1, 3), rgb[:, :b].reshape(-1, 3), rgb[:, -b:].reshape(-1, 3)]
+    )
+    bg = np.median(border, axis=0)
+    if np.linalg.norm(border - bg, axis=1).mean() > _BORDER_STD:
+        return None
+    mask = np.linalg.norm(rgb - bg, axis=2) > _BG_DIST
+    frac = mask.mean()
+    if frac < 0.05 or frac > 0.95:
+        return None
+    return mask
+
+
 def extract_features(image: Image.Image) -> np.ndarray:
     """Ảnh PIL -> vector đặc trưng 1 chiều (N_FEATURES,)."""
     image = image.convert("RGB").resize(IMG_SIZE)
     rgb = np.asarray(image, dtype=np.float32) / 255.0
     hsv = np.asarray(image.convert("HSV"), dtype=np.float32) / 255.0
-    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+
+    sel = foreground_mask(rgb) if USE_FOREGROUND_MASK else None
+    if sel is None:
+        sel = np.ones(rgb.shape[:2], dtype=bool)
+
+    rgb_p, hsv_p = rgb[sel], hsv[sel]  # (n, 3): chỉ các điểm ảnh thuộc quả
+    h_raw = hsv_p[:, 0]  # hue gốc (dùng cho brown_ratio)
+    hsv_p = hsv_p.copy()
+    hsv_p[:, 0] = (h_raw + HUE_SHIFT) % 1.0  # hue đã dịch: dùng cho histogram và thống kê
+    h, s, v = hsv_p[:, 0], hsv_p[:, 1], hsv_p[:, 2]
 
     parts = []
 
@@ -51,18 +94,22 @@ def extract_features(image: Image.Image) -> np.ndarray:
         parts.append(hist / hist.sum())
 
     # 2. Thống kê màu: mean và std của R,G,B rồi H,S,V
-    parts.append(np.concatenate([rgb.mean(axis=(0, 1)), hsv.mean(axis=(0, 1))]))
-    parts.append(np.concatenate([rgb.std(axis=(0, 1)), hsv.std(axis=(0, 1))]))
+    parts.append(np.concatenate([rgb_p.mean(axis=0), hsv_p.mean(axis=0)]))
+    parts.append(np.concatenate([rgb_p.std(axis=0), hsv_p.std(axis=0)]))
 
     # 3. Tỉ lệ vùng tối và vùng nâu (dấu hiệu của trái cây hỏng)
     dark_ratio = (v < 0.3).mean()
-    brown_ratio = ((h > 0.04) & (h < 0.12) & (s > 0.3) & (v < 0.6)).mean()
+    brown_ratio = ((h_raw > 0.04) & (h_raw < 0.12) & (s > 0.3) & (v < 0.6)).mean()
     parts.append(np.array([dark_ratio, brown_ratio]))
 
-    # 4. Texture: gradient theo hai trục trên ảnh xám
+    # 4. Texture: gradient theo hai trục trên ảnh xám (chỉ tính giữa các điểm ảnh cùng thuộc quả)
     gray = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
     gx = np.abs(np.diff(gray, axis=1))
     gy = np.abs(np.diff(gray, axis=0))
+    ok_x = sel[:, 1:] & sel[:, :-1]
+    ok_y = sel[1:, :] & sel[:-1, :]
+    if ok_x.sum() >= 10 and ok_y.sum() >= 10:
+        gx, gy = gx[ok_x], gy[ok_y]
     parts.append(np.array([gx.mean(), gy.mean(), gx.std(), gy.std()]))
 
     return np.concatenate(parts).astype(np.float32)
@@ -98,13 +145,14 @@ def load_feature_splits(refresh=False, n_jobs=-1):
     """
     Trả về dict {"train": (X, y), "val": (X, y), "test": (X, y)}.
 
-    Trích xuất đặc trưng khá tốn thời gian nên kết quả được lưu ở data/processed/features_<tập>.npz
-    và dùng lại ở các lần sau. Cache tự bị bỏ nếu danh sách ảnh của tập đó thay đổi.
+    Trích xuất đặc trưng khá tốn thời gian nên kết quả được lưu ở
+    data/processed/features_<tập>_<chế độ dữ liệu>_<cách tính đặc trưng>.npz và dùng lại ở các lần sau.
+    Cache tự bị bỏ nếu danh sách ảnh của tập đó thay đổi.
     """
     train_df, val_df, test_df = load_splits()
     result = {}
     for name, df in (("train", train_df), ("val", val_df), ("test", test_df)):
-        cache = os.path.join(PROCESSED_DIR, f"features_{name}.npz")
+        cache = os.path.join(PROCESSED_DIR, f"features_{name}_{SPLIT_TAG}_{FEATURE_VERSION}.npz")
         rel_names = np.array([os.path.relpath(p, ROOT_DIR) for p in df["filename"]])
 
         if not refresh and os.path.exists(cache):
