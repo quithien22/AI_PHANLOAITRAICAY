@@ -2,14 +2,15 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Chỉ cài thư viện cần cho API (không cần pandas/matplotlib/seaborn/sklearn của phần train)
+# Chỉ cài thư viện cần cho API (không cần pandas/matplotlib/seaborn của phần train)
 RUN pip install --no-cache-dir \
     fastapi \
     "uvicorn[standard]" \
     python-multipart \
     pillow \
     numpy \
-    "tensorflow-cpu>=2.12"
+    scikit-learn \
+    joblib
 
 COPY api ./api
 COPY src ./src

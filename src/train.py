@@ -1,158 +1,81 @@
 """
-Huấn luyện mô hình phân loại fresh/rotten.
+Huấn luyện mô hình học máy phân loại fresh/rotten trên vector đặc trưng ảnh (xem src/features.py).
 
-- Các hàm build_model / fit_model / make_generators được notebooks và experiments.py dùng lại.
+- Các hàm build_model / fit_model được notebooks và experiments.py dùng lại.
 - Chạy trực tiếp sẽ huấn luyện lại bằng cấu hình tốt nhất trong reports/best_experiment.json
-  (nếu chưa chạy thí nghiệm thì dùng DEFAULT_CONFIG), rồi lưu models/best_model.h5:
+  (nếu chưa chạy thí nghiệm thì dùng DEFAULT_CONFIG), rồi lưu models/best_model.joblib:
 
     python -m src.train
+
+Một cấu hình (cfg) gồm: {"name": ..., "algo": <khoá trong ALGORITHMS>, "params": {siêu tham số}}.
 """
 import json
 import os
 
-import tensorflow as tf
-from tensorflow.keras import layers, models
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import joblib
+from sklearn.metrics import accuracy_score, f1_score, log_loss
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
 
-from src.data_loader import (
-    BEST_CONFIG_PATH,
-    BEST_MODEL_PATH,
-    CLASS_NAMES,
-    CLASS_NAMES_PATH,
-    IMG_SIZE,
-    MODELS_DIR,
-    SEED,
-    load_splits,
-)
-from src.evaluate import evaluate_model, plot_history
-from src.features import AUGMENTATIONS
+from src.data_loader import BEST_CONFIG_PATH, BEST_MODEL_PATH, CLASS_NAMES, CLASS_NAMES_PATH, MODELS_DIR, SEED
+from src.evaluate import evaluate_model
+from src.features import load_feature_splits
 
-BATCH_SIZE = 32
+# Các thuật toán học máy được dùng (mỗi mục nhận dict siêu tham số và trả về bộ phân loại)
+ALGORITHMS = {
+    "logistic_regression": lambda p: LogisticRegression(max_iter=1000, random_state=SEED, **p),
+    "knn": lambda p: KNeighborsClassifier(**p),
+    "naive_bayes": lambda p: GaussianNB(**p),
+    "decision_tree": lambda p: DecisionTreeClassifier(random_state=SEED, **p),
+    "random_forest": lambda p: RandomForestClassifier(random_state=SEED, n_jobs=-1, **p),
+    "svm": lambda p: SVC(probability=True, random_state=SEED, **p),
+}
 
-# Cấu hình baseline: MobileNetV2 đóng băng, lr 1e-3 (chính là mô hình trước đây của dự án)
+# Cấu hình baseline: Logistic Regression (mô hình đơn giản nhất)
 DEFAULT_CONFIG = {
-    "name": "E2_mnv2_frozen_lr1e-3",
-    "arch": "mobilenetv2",
-    "lr": 1e-3,
-    "dropout": 0.3,
-    "dense_units": 128,
-    "aug": "normal",
-    "finetune_layers": 0,
-    "finetune_lr": 1e-5,
-    "epochs": 30,
+    "name": "E1_logistic_regression",
+    "algo": "logistic_regression",
+    "params": {"C": 1.0},
 }
 
 
-def make_generators(train_df, val_df, test_df, aug="normal"):
-    """Tạo generator. Chỉ train có augmentation; val/test shuffle=False."""
-    train_datagen = ImageDataGenerator(preprocessing_function=preprocess_input, **AUGMENTATIONS[aug])
-    eval_datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
-    common = dict(
-        x_col="filename",
-        y_col="label",
-        classes=CLASS_NAMES,
-        target_size=IMG_SIZE,
-        batch_size=BATCH_SIZE,
-        class_mode="categorical",
-    )
-    train_gen = train_datagen.flow_from_dataframe(train_df, shuffle=True, seed=SEED, **common)
-    val_gen = eval_datagen.flow_from_dataframe(val_df, shuffle=False, **common)
-    test_gen = eval_datagen.flow_from_dataframe(test_df, shuffle=False, **common)
-    return train_gen, val_gen, test_gen
-
-
-def _compile(model, lr):
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
-        loss="categorical_crossentropy",
-        metrics=["accuracy"],
-    )
-
-
 def build_model(cfg):
-    """Trả về (model, base_model). base_model là None với kiến trúc CNN tự xây."""
-    n = len(CLASS_NAMES)
-    head = [
-        layers.Dropout(cfg["dropout"]),
-        layers.Dense(cfg["dense_units"], activation="relu"),
-        layers.Dropout(cfg["dropout"]),
-        layers.Dense(n, activation="softmax"),
-    ]
-
-    if cfg["arch"] == "cnn":
-        base = None
-        model = models.Sequential(
-            [
-                layers.Input(shape=IMG_SIZE + (3,)),
-                layers.Conv2D(32, 3, activation="relu"),
-                layers.MaxPooling2D(),
-                layers.Conv2D(64, 3, activation="relu"),
-                layers.MaxPooling2D(),
-                layers.Conv2D(128, 3, activation="relu"),
-                layers.MaxPooling2D(),
-                layers.GlobalAveragePooling2D(),
-                *head,
-            ]
-        )
-    elif cfg["arch"] == "mobilenetv2":
-        base = MobileNetV2(input_shape=IMG_SIZE + (3,), include_top=False, weights="imagenet")
-        base.trainable = False
-        model = models.Sequential([base, layers.GlobalAveragePooling2D(), *head])
-    else:
-        raise ValueError(f"arch không hợp lệ: {cfg['arch']}")
-
-    _compile(model, cfg["lr"])
-    return model, base
-
-
-def _callbacks():
-    return [
-        EarlyStopping(monitor="val_loss", patience=4, restore_best_weights=True, verbose=1),
-        ReduceLROnPlateau(monitor="val_loss", factor=0.3, patience=2, min_lr=1e-7, verbose=1),
-    ]
-
-
-def fit_model(cfg, train_gen, val_gen, epochs=None):
     """
-    Huấn luyện theo cấu hình. Nếu cfg["finetune_layers"] > 0: sau giai đoạn đầu (base đóng băng)
-    mở khoá N lớp cuối của MobileNetV2 và train tiếp với lr nhỏ.
-
-    Trả về (model, history_dict, {"val_loss", "val_acc"}).
+    Pipeline gồm 2 bước: chuẩn hoá (StandardScaler) rồi bộ phân loại.
+    Chuẩn hoá giúp KNN, SVM, Logistic Regression không bị lệch bởi đặc trưng có thang đo lớn.
     """
-    epochs = epochs or cfg.get("epochs", 30)
-    tf.keras.utils.set_random_seed(SEED)
-    model, base = build_model(cfg)
+    algo = cfg["algo"]
+    if algo not in ALGORITHMS:
+        raise ValueError(f"algo không hợp lệ: {algo}. Chọn một trong {list(ALGORITHMS)}")
+    classifier = ALGORITHMS[algo](cfg.get("params", {}))
+    return Pipeline([("scaler", StandardScaler()), ("clf", classifier)])
 
-    hist = model.fit(train_gen, validation_data=val_gen, epochs=epochs, callbacks=_callbacks(), verbose=1)
-    history = {k: list(v) for k, v in hist.history.items()}
 
-    n_unfreeze = cfg.get("finetune_layers", 0)
-    if base is not None and n_unfreeze > 0:
-        base.trainable = True
-        for layer in base.layers[:-n_unfreeze]:
-            layer.trainable = False
-        _compile(model, cfg["finetune_lr"])  # bắt buộc compile lại sau khi đổi trainable
-        hist2 = model.fit(
-            train_gen,
-            validation_data=val_gen,
-            epochs=max(epochs // 2, 5),
-            callbacks=_callbacks(),
-            verbose=1,
-        )
-        for k, v in hist2.history.items():
-            history.setdefault(k, []).extend(v)
+def fit_model(cfg, X_train, y_train, X_val, y_val):
+    """Huấn luyện trên tập train, đo trên tập val. Trả về (model, {"val_acc", "val_loss", "val_f1"})."""
+    model = build_model(cfg)
+    model.fit(X_train, y_train)
 
-    val_loss, val_acc = model.evaluate(val_gen, verbose=0)  # trọng số tốt nhất đã được khôi phục
-    return model, history, {"val_loss": float(val_loss), "val_acc": float(val_acc)}
+    y_pred = model.predict(X_val)
+    y_prob = model.predict_proba(X_val)
+    metrics = {
+        "val_acc": float(accuracy_score(y_val, y_pred)),
+        "val_loss": float(log_loss(y_val, y_prob, labels=list(range(len(CLASS_NAMES))))),
+        "val_f1": float(f1_score(y_val, y_pred, average="macro")),
+    }
+    return model, metrics
 
 
 def save_artifacts(model):
-    """Lưu models/best_model.h5 và models/class_names.json (API đọc 2 file này)."""
+    """Lưu models/best_model.joblib và models/class_names.json (API đọc 2 file này)."""
     os.makedirs(MODELS_DIR, exist_ok=True)
-    model.save(BEST_MODEL_PATH)
+    joblib.dump(model, BEST_MODEL_PATH)
     with open(CLASS_NAMES_PATH, "w", encoding="utf-8") as f:
         json.dump(CLASS_NAMES, f, ensure_ascii=False)
     print(f"Đã lưu mô hình: {BEST_MODEL_PATH}")
@@ -160,26 +83,29 @@ def save_artifacts(model):
 
 
 def load_best_config():
-    """Cấu hình thắng cuộc từ reports/best_experiment.json, nếu chưa có thì dùng DEFAULT_CONFIG."""
+    """Cấu hình thắng cuộc từ reports/best_experiment.json; không có (hoặc là file cũ của bản deep learning) thì dùng DEFAULT_CONFIG."""
     if os.path.exists(BEST_CONFIG_PATH):
         with open(BEST_CONFIG_PATH, encoding="utf-8") as f:
-            return json.load(f)["config"]
+            cfg = json.load(f).get("config", {})
+        if cfg.get("algo") in ALGORITHMS:
+            return cfg
     return DEFAULT_CONFIG
 
 
-def train_final(cfg=None, epochs=None):
-    """Huấn luyện đầy đủ bằng cấu hình đã chọn, đánh giá trên test, lưu model."""
+def train_final(cfg=None):
+    """Huấn luyện bằng cấu hình đã chọn, đánh giá trên val và test, lưu model."""
     cfg = cfg or load_best_config()
     print("Cấu hình huấn luyện:", cfg)
 
-    train_df, val_df, test_df = load_splits()
-    train_gen, val_gen, test_gen = make_generators(train_df, val_df, test_df, cfg["aug"])
+    data = load_feature_splits()
+    X_train, y_train = data["train"]
+    X_val, y_val = data["val"]
+    X_test, y_test = data["test"]
 
-    model, history, val = fit_model(cfg, train_gen, val_gen, epochs)
+    model, val = fit_model(cfg, X_train, y_train, X_val, y_val)
     print("Validation:", val)
 
-    plot_history(history)
-    test = evaluate_model(model, test_gen)
+    test = evaluate_model(model, X_test, y_test)
     save_artifacts(model)
     return {"config": cfg, "val": val, "test": test}
 

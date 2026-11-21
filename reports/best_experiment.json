@@ -1,23 +1,19 @@
 {
   "selection_rule": "val_acc cao nhất, hòa thì val_loss thấp hơn (chỉ dùng tập validation)",
-  "epochs_per_experiment": 15,
   "config": {
-    "dropout": 0.3,
-    "dense_units": 128,
-    "aug": "normal",
-    "finetune_layers": 30,
-    "finetune_lr": 1e-05,
-    "name": "E4_mnv2_finetune_last30",
-    "arch": "mobilenetv2",
-    "lr": 0.001,
-    "epochs": 30
+    "name": "E5_random_forest_200",
+    "algo": "random_forest",
+    "params": {
+      "n_estimators": 200
+    }
   },
   "val": {
-    "val_acc": 0.9995415210723877,
-    "val_loss": 0.0024639691691845655
+    "val_acc": 0.9917469050894085,
+    "val_loss": 0.06994077891262854,
+    "val_f1": 0.9916014745874971
   },
   "test": {
-    "test_loss": 0.007225205656141043,
-    "test_acc": 0.9970348477363586
+    "test_loss": 0.06686396297972182,
+    "test_acc": 0.9936990363232023
   }
 }

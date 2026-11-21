@@ -21,13 +21,13 @@ TEST_DIR = os.path.join(RAW_DIR, "test")
 
 MODELS_DIR = os.path.join(ROOT_DIR, "models")
 REPORTS_DIR = os.path.join(ROOT_DIR, "reports")
-BEST_MODEL_PATH = os.path.join(MODELS_DIR, "best_model.h5")
+BEST_MODEL_PATH = os.path.join(MODELS_DIR, "best_model.joblib")
 CLASS_NAMES_PATH = os.path.join(MODELS_DIR, "class_names.json")
 EXPERIMENTS_CSV = os.path.join(REPORTS_DIR, "experiments.csv")
 BEST_CONFIG_PATH = os.path.join(REPORTS_DIR, "best_experiment.json")
 
 # ----------------------------- Hằng số dữ liệu -----------------------------
-IMG_SIZE = (224, 224)
+IMG_SIZE = (64, 64)  # ảnh được thu nhỏ về cỡ này trước khi trích xuất đặc trưng
 IMG_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 CLASS_NAMES = ["fresh", "rotten"]  # thứ tự này được lưu vào models/class_names.json
 VAL_SIZE = 0.2

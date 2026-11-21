@@ -1,7 +1,7 @@
 """
-Chạy nhiều thí nghiệm, so sánh và CHỐT thí nghiệm tốt nhất.
+Chạy nhiều thuật toán học máy, so sánh và CHỐT thuật toán tốt nhất.
 
-Quy tắc chọn: val_acc cao nhất; nếu bằng nhau thì val_loss thấp hơn.
+Quy tắc chọn: val_acc cao nhất; nếu bằng nhau thì val_loss (log-loss) thấp hơn.
 Chỉ dùng tập VALIDATION để chọn. Tập test chỉ dùng 1 lần để báo cáo kết quả cuối của model thắng,
 tránh chọn model "vừa khít" với tập test.
 
@@ -9,32 +9,30 @@ tránh chọn model "vừa khít" với tập test.
     reports/experiments.csv            bảng so sánh tất cả thí nghiệm
     reports/experiments_comparison.png biểu đồ so sánh
     reports/best_experiment.json       cấu hình + chỉ số của thí nghiệm thắng
-    reports/training_history.png, confusion_matrix.png, classification_report.txt  (của model thắng)
-    models/best_model.h5, models/class_names.json                                  (API dùng)
+    reports/confusion_matrix.png, classification_report.txt  (của model thắng)
+    models/best_model.joblib, models/class_names.json         (API dùng)
 
 Chạy:  python -m src.experiments
 """
-import gc
 import json
 import os
 import time
 
 import matplotlib.pyplot as plt
 import pandas as pd
-import tensorflow as tf
 
-from src.data_loader import BEST_CONFIG_PATH, EXPERIMENTS_CSV, REPORTS_DIR, load_splits
-from src.evaluate import evaluate_model, plot_history
-from src.train import fit_model, make_generators, save_artifacts
-
-_COMMON = {"dropout": 0.3, "dense_units": 128, "aug": "normal", "finetune_layers": 0, "finetune_lr": 1e-5}
+from src.data_loader import BEST_CONFIG_PATH, EXPERIMENTS_CSV, REPORTS_DIR
+from src.evaluate import evaluate_model, plot_feature_importance
+from src.features import load_feature_splits
+from src.train import fit_model, save_artifacts
 
 EXPERIMENTS = [
-    {**_COMMON, "name": "E1_cnn_scratch", "arch": "cnn", "lr": 1e-3},
-    {**_COMMON, "name": "E2_mnv2_frozen_lr1e-3", "arch": "mobilenetv2", "lr": 1e-3},
-    {**_COMMON, "name": "E3_mnv2_frozen_lr1e-4", "arch": "mobilenetv2", "lr": 1e-4},
-    {**_COMMON, "name": "E4_mnv2_finetune_last30", "arch": "mobilenetv2", "lr": 1e-3, "finetune_layers": 30},
-    {**_COMMON, "name": "E5_mnv2_strong_aug_dropout0.5", "arch": "mobilenetv2", "lr": 1e-3, "dropout": 0.5, "aug": "strong"},
+    {"name": "E1_logistic_regression", "algo": "logistic_regression", "params": {"C": 1.0}},
+    {"name": "E2_knn_k5", "algo": "knn", "params": {"n_neighbors": 5}},
+    {"name": "E3_naive_bayes", "algo": "naive_bayes", "params": {}},
+    {"name": "E4_decision_tree_depth10", "algo": "decision_tree", "params": {"max_depth": 10}},
+    {"name": "E5_random_forest_200", "algo": "random_forest", "params": {"n_estimators": 200}},
+    {"name": "E6_svm_rbf_C10", "algo": "svm", "params": {"kernel": "rbf", "C": 10.0, "gamma": "scale"}},
 ]
 
 
@@ -50,7 +48,7 @@ def plot_comparison(df, out_path):
             va="center",
         )
     ax.set_xlabel("Validation accuracy (%)")
-    ax.set_title("So sánh các thí nghiệm")
+    ax.set_title("So sánh các thuật toán")
     lo = max(0, d["val_acc"].min() * 100 - 5)
     ax.set_xlim(lo, 105)
     plt.tight_layout()
@@ -58,14 +56,16 @@ def plot_comparison(df, out_path):
     plt.close(fig)
 
 
-def run_experiments(epochs=15, names=None):
+def run_experiments(names=None, refresh_features=False):
     """
     Chạy các thí nghiệm trong EXPERIMENTS (hoặc chỉ những tên trong `names`).
     Trả về (DataFrame kết quả đã sắp xếp, dict thí nghiệm thắng).
     """
     os.makedirs(REPORTS_DIR, exist_ok=True)
-    train_df, val_df, test_df = load_splits()
-    gen_cache = {}  # (train_gen, val_gen, test_gen) theo từng mức augmentation
+    data = load_feature_splits(refresh=refresh_features)
+    X_train, y_train = data["train"]
+    X_val, y_val = data["val"]
+    X_test, y_test = data["test"]
 
     rows, best = [], None
     for cfg in EXPERIMENTS:
@@ -73,27 +73,21 @@ def run_experiments(epochs=15, names=None):
             continue
         print(f"\n{'=' * 70}\n>>> {cfg['name']}\n{'=' * 70}")
 
-        if cfg["aug"] not in gen_cache:
-            gen_cache[cfg["aug"]] = make_generators(train_df, val_df, test_df, cfg["aug"])
-        train_gen, val_gen, _ = gen_cache[cfg["aug"]]
-
         t0 = time.time()
-        model, history, val = fit_model(cfg, train_gen, val_gen, epochs)
+        model, val = fit_model(cfg, X_train, y_train, X_val, y_val)
         row = {
-            **cfg,
+            "name": cfg["name"],
+            "algo": cfg["algo"],
+            "params": json.dumps(cfg["params"]),
             **val,
-            "train_acc_last": history["accuracy"][-1],
-            "epochs_run": len(history["loss"]),
-            "minutes": round((time.time() - t0) / 60, 1),
+            "seconds": round(time.time() - t0, 1),
         }
+        print(f"val_acc={val['val_acc']:.4f}  val_loss={val['val_loss']:.4f}  ({row['seconds']}s)")
         rows.append(row)
         pd.DataFrame(rows).to_csv(EXPERIMENTS_CSV, index=False, encoding="utf-8")  # lưu dần, lỡ dừng giữa chừng
 
         if best is None or (val["val_acc"], -val["val_loss"]) > (best["row"]["val_acc"], -best["row"]["val_loss"]):
-            best = {"model": model, "history": history, "cfg": cfg, "row": row}
-        else:
-            del model
-        gc.collect()
+            best = {"model": model, "cfg": cfg, "row": row}
 
     if best is None:
         raise RuntimeError("Không có thí nghiệm nào được chạy (kiểm tra tham số `names`).")
@@ -104,23 +98,20 @@ def run_experiments(epochs=15, names=None):
 
     # Chốt: đánh giá model thắng trên test (1 lần), lưu model + cấu hình
     print(f"\n>>> THẮNG: {best['cfg']['name']}")
-    _, _, test_gen = gen_cache[best["cfg"]["aug"]]
-    plot_history(best["history"])
-    test = evaluate_model(best["model"], test_gen)
+    test = evaluate_model(best["model"], X_test, y_test)
+    plot_feature_importance(best["model"])
     save_artifacts(best["model"])
 
     info = {
         "selection_rule": "val_acc cao nhất, hòa thì val_loss thấp hơn (chỉ dùng tập validation)",
-        "epochs_per_experiment": epochs,
-        "config": {**best["cfg"], "epochs": 30},
-        "val": {"val_acc": best["row"]["val_acc"], "val_loss": best["row"]["val_loss"]},
+        "config": best["cfg"],
+        "val": {k: best["row"][k] for k in ("val_acc", "val_loss", "val_f1")},
         "test": test,
     }
     with open(BEST_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(info, f, ensure_ascii=False, indent=2)
     print(f"Đã ghi {BEST_CONFIG_PATH}")
 
-    tf.keras.backend.clear_session()
     return results, info
 
 

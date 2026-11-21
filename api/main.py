@@ -13,8 +13,8 @@ import logging
 import os
 from pathlib import Path
 
+import joblib
 import numpy as np
-import tensorflow as tf
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,7 +25,7 @@ from src.features import InvalidImageError, preprocess_image_bytes
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("fruit-api")
 
-MODEL_PATH = Path(BEST_MODEL_PATH)  # models/best_model.h5 (do src.experiments / src.train sinh ra)
+MODEL_PATH = Path(BEST_MODEL_PATH)  # models/best_model.joblib (do src.experiments / src.train sinh ra)
 CLASS_NAMES_PATH = Path(CLASS_NAMES_PATH)  # models/class_names.json
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/bmp"}
@@ -51,7 +51,7 @@ app.add_middleware(
 if not MODEL_PATH.exists():
     raise RuntimeError(f"Không tìm thấy mô hình: {MODEL_PATH}. Hãy chạy notebook 03 hoặc `python -m src.experiments` trước.")
 
-model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+model = joblib.load(MODEL_PATH)  # Pipeline scikit-learn: StandardScaler + bộ phân loại
 
 if CLASS_NAMES_PATH.exists():
     CLASS_NAMES = json.loads(CLASS_NAMES_PATH.read_text(encoding="utf-8"))
@@ -61,7 +61,7 @@ else:
 
 
 def run_prediction(batch: np.ndarray) -> dict:
-    probs = model.predict(batch, verbose=0)[0]
+    probs = model.predict_proba(batch)[0]  # thứ tự cột = thứ tự CLASS_NAMES (nhãn 0 = fresh, 1 = rotten)
     idx = int(np.argmax(probs))
     return {
         "label": CLASS_NAMES[idx],
