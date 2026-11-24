@@ -29,10 +29,19 @@ Thành công (200):
 ```json
 {
   "label": "fresh",
+  "predicted_label": "fresh",
   "confidence": 97.43,
+  "uncertain": false,
+  "uncertain_threshold": 75.0,
   "probabilities": { "fresh": 97.43, "rotten": 2.57 }
 }
 ```
+
+Khi độ tin cậy thấp hơn ngưỡng `uncertain_threshold` (mặc định 75%), `label` là `"uncertain"` và `uncertain` là `true`.
+`predicted_label` luôn là nhãn model nghiêng về (`fresh` hoặc `rotten`), dùng để tham khảo khi `label` là `uncertain`.
+
+Đổi ngưỡng bằng biến môi trường `UNCERTAIN_THRESHOLD` (đặt `0` để tắt), ví dụ:
+`UNCERTAIN_THRESHOLD=80 uvicorn api.main:app --port 8000`
 
 Lỗi:
 

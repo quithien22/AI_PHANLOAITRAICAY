@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from src.features import N_FEATURES, InvalidImageError, preprocess_image_bytes
+from src.features import N_FEATURES, InvalidImageError, preprocess_image_bytes, to_rgb_on_white
 
 
 def _png_bytes(size=(50, 80), color=(255, 0, 0)):
@@ -37,6 +37,21 @@ def test_preprocess_accepts_rgba():
     buf = io.BytesIO()
     Image.new("RGBA", (30, 30), (0, 255, 0, 128)).save(buf, format="PNG")
     assert preprocess_image_bytes(buf.getvalue()).shape == (1, N_FEATURES)
+
+
+def test_transparent_pixels_become_white():
+    # Điểm ảnh trong suốt có RGB ẩn là đen: phải thành trắng, không được thành đen
+    img = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+    img.putpixel((5, 5), (255, 128, 0, 255))  # 1 điểm cam đục
+    out = to_rgb_on_white(img)
+    assert out.mode == "RGB"
+    assert out.getpixel((0, 0)) == (255, 255, 255)
+    assert out.getpixel((5, 5)) == (255, 128, 0)
+
+
+def test_opaque_image_unchanged_by_white_compositing():
+    img = Image.new("RGB", (4, 4), (10, 20, 30))
+    assert to_rgb_on_white(img).getpixel((1, 1)) == (10, 20, 30)
 
 
 def test_preprocess_rejects_non_image():

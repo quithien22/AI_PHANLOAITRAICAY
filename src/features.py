@@ -29,7 +29,7 @@ from src.data_loader import CLASS_NAMES, IMG_SIZE, PROCESSED_DIR, ROOT_DIR, SPLI
 H_BINS, S_BINS, V_BINS = 16, 8, 8
 
 USE_FOREGROUND_MASK = True  # False = tính đặc trưng trên cả ảnh như bản cũ
-FEATURE_VERSION = ("fg2" if USE_FOREGROUND_MASK else "full2")  # đổi cách tính -> cache đặc trưng tự tạo lại
+FEATURE_VERSION = ("fg3" if USE_FOREGROUND_MASK else "full3")  # đổi cách tính -> cache đặc trưng tự tạo lại
 HUE_SHIFT = 0.1    # dịch trục hue để màu đỏ (quanh 0 và 1) không bị cắt đôi
 
 _BORDER = 3        # độ dày dải viền (pixel, trên ảnh 64x64) dùng để ước lượng màu nền
@@ -70,9 +70,24 @@ def foreground_mask(rgb):
     return mask
 
 
+def to_rgb_on_white(image: Image.Image) -> Image.Image:
+    """
+    Chuyển ảnh sang RGB, ghép lên nền TRẮNG nếu ảnh có kênh alpha (PNG nền trong suốt).
+
+    convert("RGB") thẳng sẽ bỏ alpha và để lộ màu ẩn của điểm ảnh trong suốt (thường là đen hoặc rác),
+    làm sai việc tách nền và các đặc trưng màu/tối.
+    """
+    has_alpha = image.mode in ("RGBA", "LA", "PA") or (image.mode == "P" and "transparency" in image.info)
+    if has_alpha:
+        rgba = image.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        return Image.alpha_composite(background, rgba).convert("RGB")
+    return image.convert("RGB")
+
+
 def extract_features(image: Image.Image) -> np.ndarray:
     """Ảnh PIL -> vector đặc trưng 1 chiều (N_FEATURES,)."""
-    image = image.convert("RGB").resize(IMG_SIZE)
+    image = to_rgb_on_white(image).resize(IMG_SIZE)
     rgb = np.asarray(image, dtype=np.float32) / 255.0
     hsv = np.asarray(image.convert("HSV"), dtype=np.float32) / 255.0
 

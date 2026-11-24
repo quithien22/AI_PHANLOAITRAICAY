@@ -67,7 +67,8 @@
             "exec": [
               "pm.test('Status 200', () => pm.response.to.have.status(200));",
               "const body = pm.response.json();",
-              "pm.test('label la fresh hoac rotten', () => pm.expect(['fresh', 'rotten']).to.include(body.label));",
+              "pm.test('label la fresh, rotten hoac uncertain', () => pm.expect(['fresh', 'rotten', 'uncertain']).to.include(body.label));",
+              "pm.test('predicted_label la fresh hoac rotten', () => pm.expect(['fresh', 'rotten']).to.include(body.predicted_label));",
               "pm.test('confidence trong khoang 0-100', () => pm.expect(body.confidence).to.be.within(0, 100));",
               "pm.test('co probabilities cho moi lop', () => pm.expect(body.probabilities).to.have.all.keys('fresh', 'rotten'));"
             ]

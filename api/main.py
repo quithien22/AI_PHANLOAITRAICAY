@@ -30,6 +30,13 @@ CLASS_NAMES_PATH = Path(CLASS_NAMES_PATH)  # models/class_names.json
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/bmp"}
 
+# Ngưỡng độ tin cậy (%). Thấp hơn ngưỡng này thì API trả label = "uncertain" thay vì ép ra fresh/rotten.
+# Đặt UNCERTAIN_THRESHOLD=0 để tắt. Mặc định 75.
+try:
+    UNCERTAIN_THRESHOLD = float(os.getenv("UNCERTAIN_THRESHOLD", "75"))
+except ValueError:
+    UNCERTAIN_THRESHOLD = 75.0
+
 # Danh sách origin được phép gọi API từ trình duyệt, phân tách bằng dấu phẩy. Mặc định: cho tất cả.
 ALLOW_ORIGINS = [o.strip() for o in os.getenv("ALLOW_ORIGINS", "*").split(",") if o.strip()]
 
@@ -63,9 +70,14 @@ else:
 def run_prediction(batch: np.ndarray) -> dict:
     probs = model.predict_proba(batch)[0]  # thứ tự cột = thứ tự CLASS_NAMES (nhãn 0 = fresh, 1 = rotten)
     idx = int(np.argmax(probs))
+    confidence = round(float(probs[idx]) * 100, 2)
+    is_uncertain = confidence < UNCERTAIN_THRESHOLD
     return {
-        "label": CLASS_NAMES[idx],
-        "confidence": round(float(probs[idx]) * 100, 2),
+        "label": "uncertain" if is_uncertain else CLASS_NAMES[idx],
+        "predicted_label": CLASS_NAMES[idx],  # nhãn mà model nghiêng về, kể cả khi không chắc
+        "confidence": confidence,
+        "uncertain": is_uncertain,
+        "uncertain_threshold": UNCERTAIN_THRESHOLD,
         "probabilities": {name: round(float(p) * 100, 2) for name, p in zip(CLASS_NAMES, probs)},
     }
 
